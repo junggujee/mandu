@@ -1,5 +1,6 @@
 # 이 브랜치나 main 에 push 하면 GitHub Pages 로 자동 배포됩니다.
 # 처음 한 번: 저장소 Settings → Pages → Source 를 "GitHub Actions" 로 선택하세요.
+# 실패하면 Re-run 대신 Actions → "Deploy to GitHub Pages" → "Run workflow" 로 새로 실행하세요.
 name: Deploy to GitHub Pages
 on:
   push:
@@ -11,18 +12,22 @@ permissions:
   id-token: write
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: .
   deploy:
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: .
       - id: deployment
         uses: actions/deploy-pages@v4
