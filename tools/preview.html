@@ -1,21 +1,25 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>선물 3D 미리보기</title><style>html,body{margin:0;height:100%;background:#1a1a2e;overflow:hidden}</style>
-<script type="importmap">{ "imports": { "three": "../lib/three.module.js" } }</script></head><body>
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>선물 360° 미리보기</title>
+<style>
+ html,body{margin:0;height:100%;overflow:hidden;color:#fff;font-family:-apple-system,"Noto Sans KR",system-ui,sans-serif;
+   background:radial-gradient(circle at 50% 40%,#33295f 0%,#0b0b1a 75%)}
+ #v{position:absolute;inset:0}
+ .bar{position:absolute;left:0;right:0;top:12px;display:flex;gap:8px;justify-content:center}
+ button{font:inherit;font-weight:800;border:0;border-radius:999px;padding:10px 18px;background:rgba(255,255,255,.18);color:#fff;cursor:pointer}
+ button.on{background:#ffd54a;color:#2b1a00}
+ .hint{position:absolute;left:0;right:0;bottom:20px;text-align:center;opacity:.85;pointer-events:none}
+</style>
+<script type="importmap">{ "imports": { "three": "../lib/three.module.js", "three/addons/": "../lib/addons/" } }</script></head><body>
+<div id="v"></div>
+<div class="bar"><button data-k="seal">🦭 준우 · 하프물범 필통</button><button data-k="sword">⚔️ 정우 · 스파크 검</button></div>
+<div class="hint">드래그 = 360° 회전 · 휠/두 손가락 = 확대 · 가만히 두면 자동 회전</div>
 <script type="module">
-import * as THREE from "three";
-import { createSeal, createSword } from "../models.js";
-const r = new THREE.WebGLRenderer({ antialias: true }); r.setSize(innerWidth, innerHeight); r.setPixelRatio(devicePixelRatio);
-r.outputColorSpace = THREE.SRGBColorSpace; document.body.appendChild(r.domElement);
-const sc = new THREE.Scene(), cam = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.01, 50);
-cam.position.set(0, 0.9, 3.0); cam.lookAt(0, 0.4, 0);
-sc.add(new THREE.HemisphereLight(0xffffff, 0x8899aa, 1.4));
-const d = new THREE.DirectionalLight(0xffffff, 2.2); d.position.set(1, 2, 1.5); sc.add(d);
-const seal = createSeal(); seal.position.x = -0.55; seal.scale.setScalar(0.75); sc.add(seal);
-const sword = createSword(); sword.position.set(0.6, 0.35, 0); sw = sword; sc.add(sword);
-var sw; const q = new URLSearchParams(location.search); const a = parseFloat(q.get("a") || "0.6");
-seal.rotation.y = a; sword.rotation.y = -0.5;
-const c = new THREE.Clock();
-r.setAnimationLoop(() => { const t = c.getElapsedTime(); sword.userData.glowMat.uniforms.uT.value = t;
-  if (!q.has("still")) { seal.rotation.y = a + t * 0.6; sword.rotation.y = -0.5 + t * 0.6; } r.render(sc, cam); });
-window.ok = true;
+import { Viewer360 } from "../viewer.js";
+const v = new Viewer360(document.getElementById("v"));
+const q = new URLSearchParams(location.search);
+const show = (k) => { v.open(k); document.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.k === k)); };
+document.querySelectorAll("button").forEach(b => b.onclick = () => show(b.dataset.k));
+show(q.get("k") || "seal");
+if (q.has("yaw")) { v.yaw = parseFloat(q.get("yaw")); v.pitch = parseFloat(q.get("pitch") || "0.2"); v.idle = -1e9; }
+window.ok = true; window.viewer = v;
 </script></body></html>

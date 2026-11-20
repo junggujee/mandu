@@ -1,11 +1,13 @@
 import * as THREE from "three";
 import { MindARThree } from "./lib/mindar-image-three.prod.js";
 import { CONFIG } from "./config.js";
-import { createSeal, createSword } from "./models.js";
+import { createSeal, createSword, applyEnvironment } from "./models.js";
+import { Viewer360 } from "./viewer.js";
 
 const $ = (s) => document.querySelector(s);
 const ui = { start: $("#start"), startBtn: $("#startBtn"), err: $("#err"), scan: $("#scan"), frame: $("#frame"),
-  msg: $("#msg"), letterBtn: $("#letterBtn"), letter: $("#letter"), paper: $("#paper"), again: $("#again"), flash: $("#flash") };
+  msg: $("#msg"), letterBtn: $("#letterBtn"), letter: $("#letter"), paper: $("#paper"), again: $("#again"), flash: $("#flash"),
+  magic: $("#magic"), view360: $("#view360"), viewer: $("#viewer"), viewerTitle: $("#viewerTitle"), viewerClose: $("#viewerClose") };
 
 // ───────── 소리 (WebAudio 합성, 파일 없음) ─────────
 let actx = null;
@@ -125,71 +127,78 @@ class Confetti {
   }
 }
 
-// 검에서 튀는 불똥 (검 좌표계, 계속 생성)
-class Embers {
-  constructor(parent, n = 90) {
-    this.n = n; this.pos = new Float32Array(n * 3); this.vel = new Float32Array(n * 3); this.life = new Float32Array(n);
-    const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(this.pos, 3));
-    this.pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.045, map: spriteTex, color: 0xff8a2b, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-    this.pts.frustumCulled = false; parent.add(this.pts);
-    for (let i = 0; i < n; i++) this.life[i] = 0, this.pos[i * 3 + 1] = -99;
-  }
-  update(dt) {
-    for (let i = 0; i < this.n; i++) {
-      this.life[i] -= dt;
-      if (this.life[i] <= 0) {
-        this.life[i] = 0.4 + Math.random() * 0.6;
-        this.pos.set([(Math.random() - 0.5) * 0.3, 0.06, (Math.random() - 0.5) * 0.06], i * 3);
-        const a = Math.random() * Math.PI * 2, s = 0.3 + Math.random() * 0.5;
-        this.vel.set([Math.cos(a) * s, 0.2 + Math.random() * 0.5, Math.sin(a) * s * 0.6], i * 3);
-      }
-      this.vel[i * 3 + 1] -= 1.2 * dt;
-      for (let k = 0; k < 3; k++) this.pos[i * 3 + k] += this.vel[i * 3 + k] * dt;
-    }
-    this.pts.geometry.attributes.position.needsUpdate = true;
-  }
-}
-
 // ───────── 3D 장면 ─────────
 const easeOutBack = (t) => { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const viewer = new Viewer360($("#viewerCanvas"));
+let viewerOpen = false;
 
 async function start() {
   initAudio();
   ui.startBtn.disabled = true; ui.err.textContent = "카메라 준비 중…";
+  let targets;
+  try { targets = await (await fetch("./targets/targets.json")).json(); }
+  catch (e) { ui.err.textContent = "그림 정보(targets.json)를 불러오지 못했어요."; ui.startBtn.disabled = false; return; }
+
   const mindar = new MindARThree({
     container: $("#ar"), imageTargetSrc: CONFIG.mindFile,
     uiLoading: "no", uiScanning: "no", uiError: "no",
-    maxTrack: 2, filterMinCF: 0.0005, filterBeta: 300, missTolerance: 8, warmupTolerance: 4,
+    // 한 번에 하나만 추적(같은 그림의 '전체/캐릭터' 마커가 겹치지 않게)
+    // missTolerance↑: 잠깐 놓쳐도 선물이 사라지지 않음, warmupTolerance↓: 더 빨리 나타남
+    // 대충 비춰도 넘어가게: 1프레임만 잡혀도 등장, 놓쳐도 오래 유지, 흔들림은 부드럽게
+    maxTrack: 1, filterMinCF: 0.0001, filterBeta: 50, missTolerance: 40, warmupTolerance: 1,
   });
   const { renderer, scene, camera } = mindar;
-  
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x8899aa, 1.4));
-  const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(0.5, -1, 2); scene.add(sun);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1; // 하얗게 날아가지 않게
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8899aa, 1.0));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(1, 1.5, 1.2); scene.add(sun);
+  applyEnvironment(renderer, scene); // 금속 광택 반사
 
+  // 아이별 연출 묶음(root). 인식된 마커 쪽으로 옮겨 붙입니다.
   const kids = CONFIG.kids.map((k) => {
-    const anchor = mindar.addAnchor(k.targetIndex);
-    const gift = new THREE.Group();
+    const root = new THREE.Group();
+    const gift = new THREE.Group(), user = new THREE.Group(), spin = new THREE.Group();
     const model = k.gift === "sword" ? createSword() : createSeal();
-    const spin = new THREE.Group(); spin.add(model); gift.add(spin);
-    // 물범: 얼굴이 카메라(그림 아래쪽·위쪽)를 보도록 살짝 뒤로 기댐
-    // 검: 그림 속 검처럼 칼날이 그림 위쪽을 향하고, 종이에서 비스듬히 떠오름
+    spin.add(model); user.add(spin); gift.add(user);
+    // 물범: 얼굴이 카메라를 보도록 살짝 뒤로 기댐 / 검: 그림 속 검처럼 칼날이 그림 위쪽을 향하며 비스듬히 떠오름
     gift.rotation.x = k.gift === "sword" ? 0.55 : Math.PI / 2 - 0.85;
-    anchor.group.add(gift);
     gift.visible = false;
-    // 마커 발광 판 + 링
-    const flash = new THREE.Mesh(new THREE.PlaneGeometry(1, k.aspect), new THREE.MeshBasicMaterial({ color: new THREE.Color(k.accent), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
-    anchor.group.add(flash);
+    root.add(gift);
+    const flash = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.85), new THREE.MeshBasicMaterial({ color: new THREE.Color(k.accent), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    root.add(flash);
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.4, 64), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    anchor.group.add(ring);
-    const light = new THREE.PointLight(k.gift === "sword" ? 0xff7a2a : 0xaee6ff, 0, 2); light.position.set(0, -0.3, 0.6); anchor.group.add(light);
-    const sparks = new Sparks(anchor.group), confetti = new Confetti(anchor.group);
-    const embers = k.gift === "sword" ? new Embers(model) : null;
-    const s = { k, anchor, gift, spin, model, flash, ring, light, sparks, confetti, embers, t: -1, revealed: false, visible: false, shown: 0, fired: new Set() };
-    anchor.onTargetFound = () => onFound(s);
-    anchor.onTargetLost = () => { s.visible = false; };
-    return s;
+    root.add(ring);
+    const light = new THREE.PointLight(k.gift === "sword" ? 0xff7a2a : 0xaee6ff, 0, 2); light.position.set(0, -0.3, 0.6); root.add(light);
+    const sparks = new Sparks(root), confetti = new Confetti(root);
+    return { k, root, gift, user, spin, model, flash, ring, light, sparks, confetti,
+      t: -1, revealed: false, visible: false, fired: new Set(), anchorIdx: -1, userYaw: 0, userPitch: 0, lastDrag: -99, auto: 0 };
+  });
+
+  targets.forEach((t, i) => {
+    const s = kids[t.kid]; if (!s) return;
+    const anchor = mindar.addAnchor(i);
+    // 좌표 맞춤: 원점 = 캐릭터 중심, 1 = 그림 전체 가로 길이
+    const holder = new THREE.Group(); holder.position.set(t.x, t.y, 0); holder.scale.setScalar(t.scale);
+    anchor.group.add(holder);
+    if (t.flash && !s.flashSet) {
+      s.flashSet = true; s.flash.geometry.dispose();
+      s.flash.geometry = new THREE.PlaneGeometry(t.flash[0], t.flash[1]); s.flash.position.set(t.flash[2], t.flash[3], 0);
+    }
+    anchor.onTargetFound = () => { holder.add(s.root); s.anchorIdx = i; onFound(s); };
+    anchor.onTargetLost = () => { if (s.anchorIdx === i) { s.visible = false; s.lostAt = performance.now(); } };
   });
   let active = null;
+
+  // 화면 앞 고정 위치(그림을 놓쳤거나 '마법으로 꺼내기'를 눌렀을 때 선물이 머무는 곳)
+  const free = new THREE.Group();
+  camera.add(free); scene.add(camera);
+  const placeFree = () => {
+    const d = 1000, vis = 2 * d * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    free.position.set(0, -vis * 0.05, -d);
+    free.scale.setScalar(Math.min(vis * 0.55, vis * camera.aspect * 0.9));
+    free.rotation.set(-0.85, 0, 0); // 탁자 위 그림을 비스듬히 내려다보는 각도
+  };
+  const goFree = (s) => { placeFree(); free.add(s.root); s.anchorIdx = -1; s.visible = true; };
 
   const timers = [];
   const later = (ms, fn) => timers.push(setTimeout(fn, ms));
@@ -203,28 +212,35 @@ async function start() {
       instant ? run() : later(m.at * 1000, run);
     });
     instant ? ui.letterBtn.classList.add("show") : later(s.k.letterButtonAt * 1000, () => ui.letterBtn.classList.add("show"));
-    ui.again.classList.add("show");
+    ui.again.classList.add("show"); ui.view360.classList.add("show");
   }
 
   function reveal(s) {
     s.revealed = true; s.t = 0; s.fired.clear(); s.gift.scale.setScalar(0.0001);
+    s.userYaw = 0; s.userPitch = 0; s.auto = 0;
     setMessages(s, false);
-    // 소리
-    later(100, () => { boom(); });
-    later(650, () => { pop(); });
-    later(900, () => { birthdayTune(); });
+    later(100, boom); later(650, pop); later(900, birthdayTune);
     ui.flash.style.transition = "none"; ui.flash.style.opacity = "0.55";
     requestAnimationFrame(() => { ui.flash.style.transition = "opacity .8s"; ui.flash.style.opacity = "0"; });
   }
 
   function onFound(s) {
-    initAudio();
-    s.visible = true; active = s;
+    initAudio(); everFound = true; ui.magic.classList.remove("show");
+    s.visible = true;
+    const changed = active !== s; active = s;
     ui.scan.classList.add("hidden"); ui.frame.classList.add("hidden");
-    if (!s.revealed) reveal(s); else setMessages(s, true);
+    if (!s.revealed) reveal(s); else if (changed) setMessages(s, true);
   }
 
   ui.again.onclick = () => { if (active) reveal(active); };
+  // 인식이 잘 안 될 때: 몇 초 뒤 '마법으로 꺼내기' 버튼 → 화면 앞에 바로 등장
+  let everFound = false;
+  setTimeout(() => { if (!everFound) ui.magic.classList.add("show"); }, 7000);
+  ui.magic.querySelectorAll("button").forEach((b) => b.onclick = () => {
+    const s = kids[+b.dataset.kid]; if (!s) return;
+    ui.magic.classList.remove("show");
+    goFree(s); onFound(s);
+  });
   ui.letterBtn.onclick = () => {
     if (!active) return; const k = active.k;
     ui.paper.innerHTML = "";
@@ -235,11 +251,34 @@ async function start() {
     ui.paper.append(h, b, hint, c); ui.letter.classList.add("show");
     tone(523, 0, 0.3, "sine", 0.2); tone(659, 0.12, 0.3, "sine", 0.2); tone(784, 0.24, 0.5, "sine", 0.2);
   };
-  // 화면 탭 → 색종이 한 번 더
-  $("#ar").addEventListener("pointerdown", () => {
-    if (!active || !active.visible) return;
-    const c = new THREE.Vector3(0, 0, 0.5); active.confetti.burst(c, 60); active.sparks.burst(c, 0xffd54a, 50); pop();
+  // 360° 보기 (화면 가운데에서 손가락으로 돌려 보기)
+  ui.view360.onclick = () => {
+    if (!active) return;
+    viewerOpen = true; ui.viewerTitle.textContent = `${active.k.name}의 선물`;
+    ui.viewer.classList.add("show"); viewer.open(active.k.gift);
+  };
+  ui.viewerClose.onclick = () => { viewerOpen = false; viewer.close(); ui.viewer.classList.remove("show"); };
+
+  // AR 화면: 드래그 = 선물 돌리기, 탭 = 색종이 한 번 더
+  const clock = new THREE.Clock();
+  const arEl = $("#ar"), drag = { id: null, x: 0, y: 0, moved: 0 };
+  arEl.style.touchAction = "none";
+  arEl.addEventListener("pointerdown", (e) => { drag.id = e.pointerId; drag.x = e.clientX; drag.y = e.clientY; drag.moved = 0; });
+  arEl.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY;
+    drag.moved += Math.abs(dx) + Math.abs(dy);
+    if (drag.moved > 10 && active && active.revealed && active.visible) {
+      active.userYaw += dx * 0.012; active.userPitch = clamp(active.userPitch + dy * 0.01, -1.3, 1.3); active.lastDrag = clock.elapsedTime;
+    }
   });
+  const end = (e) => {
+    if (e.pointerId !== drag.id) return; drag.id = null;
+    if (drag.moved <= 10 && active && active.visible) {
+      const c = new THREE.Vector3(0, 0, 0.5); active.confetti.burst(c, 60); active.sparks.burst(c, 0xffd54a, 50); pop();
+    }
+  };
+  arEl.addEventListener("pointerup", end); arEl.addEventListener("pointercancel", end);
 
   try {
     await mindar.start();
@@ -253,15 +292,16 @@ async function start() {
   }
   ui.start.classList.add("hidden"); ui.scan.classList.remove("hidden"); ui.frame.classList.remove("hidden");
 
-  const clock = new THREE.Clock();
   const colors = [0xff5d73, 0xffd54a, 0x5dd6ff, 0x7dff8a, 0xc58bff];
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05), time = clock.elapsedTime;
+    if (viewerOpen) return; // 360° 보기 중엔 AR 그리기 쉬기
     for (const s of kids) {
       s.sparks.update(dt); s.confetti.update(dt);
-      if (s.model.userData.glowMat) s.model.userData.glowMat.uniforms.uT.value = time;
-      if (s.embers) s.embers.update(dt);
+      if (s.model.userData.update) s.model.userData.update(dt, time); // 헤엄 / 불꽃 스파크
       if (!s.revealed) continue;
+      // 한 번 나온 선물은 그림을 놓쳐도(1.5초 이상) 화면 앞에 계속 떠 있게
+      if (!s.visible && s.anchorIdx >= 0 && performance.now() - (s.lostAt || 0) > 1500 && active === s) goFree(s);
       if (s.visible) s.t += dt;
       const t = Math.max(0, s.t);
       s.gift.visible = s.visible && t > 0.6;
@@ -280,13 +320,16 @@ async function start() {
       // 팝업 + 둥둥
       const pt = Math.min(1, Math.max(0, (t - 0.6) / 1.1));
       const sword = s.k.gift === "sword";
-      s.gift.scale.setScalar(Math.max(0.0001, easeOutBack(pt) * (sword ? 0.68 : 0.42)));
-      const lift = sword ? 0.28 : 0.16;
-      s.gift.position.set(0, sword ? -0.05 : 0.05, lift * easeOutBack(pt) + 0.035 * Math.sin(time * 2.2) * pt);
-      // 등장할 때 빙글빙글 돌다가, 이후엔 물범은 좌우로 흔들흔들 / 검은 칼날 축으로 천천히 회전
-      s.spin.rotation.y = (1 - pt) * Math.PI * 4 + (sword ? (t - 0.6) * 0.9 : 0.45 * Math.sin(time * 0.9));
-      if (s.k.gift === "seal") { s.model.rotation.z = 0.04 * Math.sin(time * 2.6); s.model.scale.set(1 + 0.02 * Math.sin(time * 4), 1 - 0.02 * Math.sin(time * 4), 1); }
-      else s.model.rotation.z = 0.06 * Math.sin(time * 1.7);
+      s.gift.scale.setScalar(Math.max(0.0001, easeOutBack(pt) * (sword ? 0.42 : 0.36)));
+      const lift = sword ? 0.3 : 0.16;
+      s.gift.position.set(0, sword ? 0.05 : 0.05, lift * easeOutBack(pt) + 0.035 * Math.sin(time * 2.2) * pt);
+      // 손으로 돌리는 중이면 자동 회전을 잠시 멈춤
+      if (time - s.lastDrag > 3) s.auto += dt;
+      s.user.rotation.set(s.userPitch, s.userYaw, 0);
+      // 검: 칼날 축으로 천천히 회전 / 물범: 그림 위를 빙글빙글 원을 그리며 헤엄
+      s.spin.rotation.y = (1 - pt) * Math.PI * 4 + s.auto * (sword ? 0.9 : 0.7);
+      if (sword) s.model.rotation.z = 0.06 * Math.sin(time * 1.7);
+      else { s.model.position.x = 0.38 * pt; s.model.rotation.y = Math.PI; s.model.rotation.z = -0.15 * pt; }
     }
     renderer.render(scene, camera);
   });

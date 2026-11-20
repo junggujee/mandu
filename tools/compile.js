@@ -1,9 +1,9 @@
-// 사용법: node tools/compile.js   (targets/ 의 순서대로 targets/targets.mind 생성)
-// 마커 순서: targets/order.json 의 배열 (기본: junwoo.png, jungwoo.png)
+// 사용법: python3 tools/prepare_targets.py && node tools/compile.js
+// targets/targets.json 의 순서대로 그림들을 묶어 targets/targets.mind 를 만듭니다.
 const { chromium } = require('playwright');
 const http = require('http'), fs = require('fs'), path = require('path');
 const root = path.resolve(__dirname, '..');
-const order = (fs.existsSync(path.join(root,'targets/order.json')) ? JSON.parse(fs.readFileSync(path.join(root,'targets/order.json'))) : ['junwoo.png','jungwoo.png']).filter(f => fs.existsSync(path.join(root,'targets',f)));
+const order = JSON.parse(fs.readFileSync(path.join(root, 'targets/targets.json'))).map(t => t.file);
 const mime = {'.html':'text/html','.js':'text/javascript','.png':'image/png'};
 const srv = http.createServer((q,r)=>{const f=path.join(root,decodeURIComponent(q.url.split('?')[0]));
   fs.readFile(f,(e,d)=>{if(e){r.writeHead(404);r.end();return;}r.writeHead(200,{'content-type':mime[path.extname(f)]||'application/octet-stream'});r.end(d);});});

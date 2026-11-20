@@ -1,15 +1,13 @@
 // ───────────────────────────────────────────────
 //  여기만 고치면 문구·편지·힌트가 바뀝니다.
-//  targetIndex 는 targets/order.json 의 순서(0=준우, 1=정우)입니다.
+//  kids 순서: 0=준우, 1=정우 (targets/targets.json 의 kid 번호와 같음)
 // ───────────────────────────────────────────────
 export const CONFIG = {
   mindFile: "./targets/targets.mind",
   kids: [
     {
       name: "준우",
-      targetIndex: 0,
       gift: "seal", // 하프물범 필통
-      aspect: 481 / 562, // 그림 세로/가로 비율 (그림 사진 크기에 맞춤)
       accent: "#7fd8ff",
       // at: 인식 후 몇 초 뒤에 보여줄지
       messages: [
@@ -30,9 +28,7 @@ export const CONFIG = {
     },
     {
       name: "정우",
-      targetIndex: 1,
       gift: "sword", // 스타 스파크 배틀 컷
-      aspect: 481 / 591,
       accent: "#ffb066",
       messages: [
         { at: 0.9, text: "🔥 정우야 🔥", big: true },
