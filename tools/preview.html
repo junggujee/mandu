@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>선물 3D 미리보기</title><style>html,body{margin:0;height:100%;background:#1a1a2e;overflow:hidden}</style>
+<script type="importmap">{ "imports": { "three": "../lib/three.module.js" } }</script></head><body>
+<script type="module">
+import * as THREE from "three";
+import { createSeal, createSword } from "../models.js";
+const r = new THREE.WebGLRenderer({ antialias: true }); r.setSize(innerWidth, innerHeight); r.setPixelRatio(devicePixelRatio);
+r.outputColorSpace = THREE.SRGBColorSpace; document.body.appendChild(r.domElement);
+const sc = new THREE.Scene(), cam = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.01, 50);
+cam.position.set(0, 0.9, 3.0); cam.lookAt(0, 0.4, 0);
+sc.add(new THREE.HemisphereLight(0xffffff, 0x8899aa, 1.4));
+const d = new THREE.DirectionalLight(0xffffff, 2.2); d.position.set(1, 2, 1.5); sc.add(d);
+const seal = createSeal(); seal.position.x = -0.55; seal.scale.setScalar(0.75); sc.add(seal);
+const sword = createSword(); sword.position.set(0.6, 0.35, 0); sw = sword; sc.add(sword);
+var sw; const q = new URLSearchParams(location.search); const a = parseFloat(q.get("a") || "0.6");
+seal.rotation.y = a; sword.rotation.y = -0.5;
+const c = new THREE.Clock();
+r.setAnimationLoop(() => { const t = c.getElapsedTime(); sword.userData.glowMat.uniforms.uT.value = t;
+  if (!q.has("still")) { seal.rotation.y = a + t * 0.6; sword.rotation.y = -0.5 + t * 0.6; } r.render(sc, cam); });
+window.ok = true;
+</script></body></html>
