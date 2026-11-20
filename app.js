@@ -7,7 +7,7 @@ import { Viewer360 } from "./viewer.js";
 const $ = (s) => document.querySelector(s);
 const ui = { start: $("#start"), startBtn: $("#startBtn"), err: $("#err"), scan: $("#scan"), frame: $("#frame"),
   msg: $("#msg"), letterBtn: $("#letterBtn"), letter: $("#letter"), paper: $("#paper"), again: $("#again"), flash: $("#flash"),
-  magic: $("#magic"), view360: $("#view360"), viewer: $("#viewer"), viewerTitle: $("#viewerTitle"), viewerClose: $("#viewerClose") };
+  magic: $("#magic"), fail: $("#fail"), retry: $("#retry"), view360: $("#view360"), viewer: $("#viewer"), viewerTitle: $("#viewerTitle"), viewerClose: $("#viewerClose") };
 
 // ───────── 소리 (WebAudio 합성, 파일 없음) ─────────
 let actx = null;
@@ -225,7 +225,7 @@ async function start() {
   }
 
   function onFound(s) {
-    initAudio(); everFound = true; ui.magic.classList.remove("show");
+    initAudio(); everFound = true; hideFail();
     s.visible = true;
     const changed = active !== s; active = s;
     ui.scan.classList.add("hidden"); ui.frame.classList.add("hidden");
@@ -234,11 +234,23 @@ async function start() {
 
   ui.again.onclick = () => { if (active) reveal(active); };
   // 인식이 잘 안 될 때: 몇 초 뒤 '마법으로 꺼내기' 버튼 → 화면 앞에 바로 등장
-  let everFound = false;
-  setTimeout(() => { if (!everFound) ui.magic.classList.add("show"); }, 7000);
+  // 인식 실패: 카메라를 켠 뒤(또는 '다시 찾기' 후) 8초 동안 준우·정우 그림이 하나도 안 잡히면 표시
+  const FAIL_AFTER_MS = 8000;
+  let everFound = false, failTimer = 0;
+  const hideFail = () => { clearTimeout(failTimer); ui.fail.classList.remove("show"); };
+  const showFail = () => {
+    ui.fail.classList.add("show"); ui.scan.classList.add("hidden"); ui.frame.classList.add("hidden");
+    const card = ui.fail.querySelector(".card"); card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake");
+    tone(392, 0, 0.18, "square", 0.08); tone(262, 0.18, 0.35, "square", 0.08); // 띠-로롱 (실패 소리)
+  };
+  const armFail = () => {
+    clearTimeout(failTimer);
+    failTimer = setTimeout(() => { if (!everFound && !kids.some((k) => k.visible)) showFail(); }, FAIL_AFTER_MS);
+  };
+  ui.retry.onclick = () => { hideFail(); ui.scan.classList.remove("hidden"); ui.frame.classList.remove("hidden"); armFail(); };
   ui.magic.querySelectorAll("button").forEach((b) => b.onclick = () => {
     const s = kids[+b.dataset.kid]; if (!s) return;
-    ui.magic.classList.remove("show");
+    hideFail();
     goFree(s); onFound(s);
   });
   ui.letterBtn.onclick = () => {
@@ -291,6 +303,7 @@ async function start() {
     return;
   }
   ui.start.classList.add("hidden"); ui.scan.classList.remove("hidden"); ui.frame.classList.remove("hidden");
+  armFail(); // 카메라가 켜진 뒤부터 시간 재기
 
   const colors = [0xff5d73, 0xffd54a, 0x5dd6ff, 0x7dff8a, 0xc58bff];
   renderer.setAnimationLoop(() => {
